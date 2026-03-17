@@ -7,7 +7,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TelegramError
 
-from bot.config import DRY_RUN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
+from bot.config import DRY_RUN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, XAI_API_KEY
 from bot.db import is_post_duplicate, log_post
 
 logger = logging.getLogger(__name__)
@@ -28,11 +28,18 @@ async def send_message(
     db=None,
     disable_preview: bool = True,
     max_retries: int = 3,
+    enrich: bool = True,
 ) -> bool:
     """Send a message to the configured Telegram channel.
 
     Returns True if sent (or dry-run logged), False on failure.
+    Runs Grok enrichment by default if XAI_API_KEY is set.
     """
+    # Enrich with Grok before dedup check (enriched content is what we send)
+    if enrich and XAI_API_KEY:
+        from bot.enricher import enrich as grok_enrich
+        text = await grok_enrich(text)
+
     if db and await is_post_duplicate(db, text):
         logger.debug("Skipping duplicate post: %s…", text[:60])
         return False
