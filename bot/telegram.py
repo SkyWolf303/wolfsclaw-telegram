@@ -1,4 +1,9 @@
-"""Telegram message helpers with retry and deduplication."""
+"""Telegram message helpers.
+
+Two-layer system:
+- send_message(): enriches with Grok, deduplicates, then pushes to rate-limited queue
+- _send_raw(): called by the dispatcher — actual Telegram API send with retry
+"""
 
 import asyncio
 import logging
@@ -22,28 +27,17 @@ def get_bot() -> Bot:
     return _bot
 
 
-async def send_message(
+async def _send_raw(
     text: str,
     post_type: str = "general",
     db=None,
     disable_preview: bool = True,
     max_retries: int = 3,
-    enrich: bool = True,
 ) -> bool:
-    """Send a message to the configured Telegram channel.
+    """Directly send a message to Telegram. Called only by the queue dispatcher.
 
     Returns True if sent (or dry-run logged), False on failure.
-    Runs Grok enrichment by default if XAI_API_KEY is set.
     """
-    # Enrich with Grok before dedup check (enriched content is what we send)
-    if enrich and XAI_API_KEY:
-        from bot.enricher import enrich as grok_enrich
-        text = await grok_enrich(text)
-
-    if db and await is_post_duplicate(db, text):
-        logger.debug("Skipping duplicate post: %s…", text[:60])
-        return False
-
     if DRY_RUN:
         logger.info("[DRY RUN] Would send (%s):\n%s", post_type, text)
         if db:
@@ -66,7 +60,7 @@ async def send_message(
             return True
         except RetryAfter as e:
             wait = e.retry_after + 1
-            logger.warning("Rate limited, waiting %ds (attempt %d)", wait, attempt)
+            logger.warning("Rate limited by Telegram, waiting %ds (attempt %d)", wait, attempt)
             await asyncio.sleep(wait)
         except TelegramError as e:
             logger.error(
@@ -81,3 +75,29 @@ async def send_message(
 
     logger.error("Failed to send message after %d retries", max_retries)
     return False
+
+
+async def send_message(
+    text: str,
+    post_type: str = "general",
+    db=None,
+    priority: int = 5,
+    enrich: bool = True,
+) -> None:
+    """Enrich, deduplicate, and enqueue a message for rate-limited delivery.
+
+    Priority: 1=urgent (breaking governance), 3=high (forum VIP/Atlas),
+              5=normal (market/TVL/twitter), 7=low (web/insights)
+    """
+    # Enrich with Grok before dedup check
+    if enrich and XAI_API_KEY:
+        from bot.enricher import enrich as grok_enrich
+        text = await grok_enrich(text)
+
+    # Deduplicate against already-sent posts
+    if db and await is_post_duplicate(db, text):
+        logger.debug("Skipping duplicate post: %s…", text[:60])
+        return
+
+    from bot.queue import get_queue
+    await get_queue().push(text, post_type=post_type, db=db, priority=priority)

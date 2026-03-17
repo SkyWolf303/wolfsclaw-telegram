@@ -12,6 +12,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from bot.config import LOG_LEVEL, SKIP_STARTUP_POLL
 from bot.db import get_db
+from bot.queue import get_queue
 from bot.sources.atlas import poll_atlas
 from bot.sources.forum import poll_forum
 from bot.sources.insights import poll_insights
@@ -113,6 +114,10 @@ async def main() -> None:
 
     scheduler.start()
 
+    # Start message queue dispatcher
+    queue = get_queue()
+    await queue.start()
+
     # Startup poll
     if not SKIP_STARTUP_POLL:
         logger.info("Running startup poll…")
@@ -139,6 +144,7 @@ async def main() -> None:
     await stop_event.wait()
 
     scheduler.shutdown(wait=False)
+    await queue.stop()
     logger.info("Bot stopped.")
 
 

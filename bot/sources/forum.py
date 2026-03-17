@@ -105,7 +105,7 @@ async def poll_forum(db) -> None:
             cat_name = CATEGORY_NAME_MAP.get(cat_id, "General")
             author = t.get("last_poster_username", "unknown")
             msg = _format_topic(t, cat_name)
-            await send_message(msg, post_type="forum_alert", db=db)
+            await send_message(msg, post_type="forum_alert", db=db, priority=3)
             await mark_topic_seen(db, tid, t.get("title", ""), author, cat_id)
             posted += 1
 
@@ -118,7 +118,7 @@ async def poll_forum(db) -> None:
                     continue
                 author = t.get("last_poster_username", "unknown")
                 msg = _format_topic(t, label)
-                await send_message(msg, post_type="forum_alert", db=db)
+                await send_message(msg, post_type="forum_alert", db=db, priority=3)
                 await mark_topic_seen(db, tid, t.get("title", ""), author, t.get("category_id", 0))
                 posted += 1
 
@@ -131,7 +131,7 @@ async def poll_forum(db) -> None:
                     continue
                 author = t.get("last_poster_username", "unknown")
                 msg = _format_topic(t, label)
-                await send_message(msg, post_type="forum_alert", db=db)
+                await send_message(msg, post_type="forum_alert", db=db, priority=3)
                 await mark_topic_seen(db, tid, t.get("title", ""), author, t.get("category_id", 0))
                 posted += 1
 
@@ -144,7 +144,7 @@ async def poll_forum(db) -> None:
                     continue
                 author = t.get("last_poster_username", "unknown")
                 msg = _format_topic(t, label)
-                await send_message(msg, post_type="forum_alert", db=db)
+                await send_message(msg, post_type="forum_alert", db=db, priority=3)
                 await mark_topic_seen(db, tid, t.get("title", ""), author, t.get("category_id", 0))
                 posted += 1
 

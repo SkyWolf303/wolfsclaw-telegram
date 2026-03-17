@@ -96,7 +96,7 @@ async def poll_insights(db) -> None:
                 f'🔗 <a href="{escape(url)}">Read report</a>'
             )
 
-            await send_message(msg, post_type="insights_report", db=db)
+            await send_message(msg, post_type="insights_report", priority=7, db=db)
             await mark_report_seen(db, url, title)
             posted += 1
             logger.info("Posted insights report: %s", title)

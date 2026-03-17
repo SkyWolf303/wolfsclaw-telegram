@@ -52,7 +52,7 @@ async def poll_atlas(db) -> None:
                             f'New commit: "{escape(message[:200])}"\n'
                             f'<a href="{html_url}">View on GitHub</a>'
                         )
-                        await send_message(msg, post_type="atlas_commit", db=db)
+                        await send_message(msg, post_type="atlas_commit", priority=3, db=db)
                         await mark_commit_seen(db, sha, message)
                         posted += 1
         except Exception as e:
@@ -81,7 +81,7 @@ async def poll_atlas(db) -> None:
                             f'<a href="{html_url}">#{pr_number}: {escape(title[:200])}</a>\n'
                             f"by {escape(user)}"
                         )
-                        await send_message(msg, post_type="atlas_pr", db=db)
+                        await send_message(msg, post_type="atlas_pr", priority=3, db=db)
                         await mark_pr_seen(db, pr_number, title)
                         posted += 1
         except Exception as e:
