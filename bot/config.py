@@ -26,6 +26,9 @@ X_BEARER_TOKEN: str = os.environ.get("X_BEARER_TOKEN", "")
 # GitHub
 GITHUB_TOKEN: str = os.environ.get("GITHUB_TOKEN", "")
 
+# Brave Search
+BRAVE_API_KEY: str = os.environ.get("BRAVE_API_KEY", "")
+
 # Database
 DB_PATH: str = os.environ.get("DB_PATH", "data/state.db")
 

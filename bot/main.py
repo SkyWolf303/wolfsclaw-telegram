@@ -17,6 +17,7 @@ from bot.sources.forum import poll_forum
 from bot.sources.insights import poll_insights
 from bot.sources.market import daily_summary, poll_market, poll_tvl, weekly_tvl_summary
 from bot.sources.twitter import poll_twitter
+from bot.sources.web import poll_web
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -32,6 +33,7 @@ POLLERS = [
     ("atlas", poll_atlas),
     ("twitter", poll_twitter),
     ("insights", poll_insights),
+    ("web", poll_web),
 ]
 
 
