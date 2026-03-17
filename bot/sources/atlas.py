@@ -11,6 +11,7 @@ from bot.config import ATLAS_FILE_PATH, ATLAS_REPO_NAME, ATLAS_REPO_OWNER, GITHU
 from bot.db import is_commit_seen, is_pr_seen, mark_commit_seen, mark_pr_seen
 from bot.telegram import send_message
 from bot.timeutils import parse_iso, is_fresh, age_label
+from bot.config import XAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,14 @@ async def poll_atlas(db) -> None:
                         lines.append(escape(message[:200]))
                         if scope_label:
                             lines.append(f"<i>Touches: {escape(scope_label)}</i>")
+
+                        # Grok narration — plain-English impact summary
+                        if XAI_API_KEY and diff:
+                            from bot.enricher import narrate_atlas_diff
+                            narration = await narrate_atlas_diff(diff[:1500], message)
+                            if narration:
+                                lines.append(f"\n{escape(narration)}")
+
                         if time_str:
                             lines.append(f"<i>Committed {time_str}</i>")
                         lines.append(f'🔗 <a href="{html_url}">View on GitHub</a>')

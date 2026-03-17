@@ -100,6 +100,49 @@ async def is_ad(raw_text: str) -> bool:
     return False
 
 
+async def narrate_atlas_diff(diff_excerpt: str, commit_message: str) -> str:
+    """Use Grok to generate a plain-English GovOps impact summary for an Atlas diff.
+    Returns a 2-3 sentence summary of what changed and what it means for governance.
+    Falls back to empty string on failure.
+    """
+    if not XAI_API_KEY:
+        return ""
+
+    prompt = f"""You are a Sky ecosystem governance expert. An Atlas edit was just committed:
+
+Commit: {commit_message}
+
+Diff excerpt (first 1500 chars):
+{diff_excerpt[:1500]}
+
+Write 2-3 plain English sentences explaining:
+1. What specifically changed in the Atlas
+2. What this means for GovOps teams, executor agents, or governance participants
+
+Be specific and technical. No fluff. Output ONLY the sentences, nothing else."""
+
+    payload = {
+        "model": XAI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 200,
+        "temperature": 0.1,
+    }
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                XAI_BASE_URL, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["choices"][0]["message"]["content"].strip()
+    except Exception:
+        logger.debug("Atlas narration failed")
+    return ""
+
+
 async def enrich(raw_text: str) -> str:
     """Pass raw_text through Grok and return a formatted version.
     Falls back to raw_text if API call fails or key not set."""

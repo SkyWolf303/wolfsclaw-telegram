@@ -17,6 +17,7 @@ from bot.sources.atlas import poll_atlas
 from bot.sources.forum import poll_forum
 from bot.sources.insights import poll_insights
 from bot.sources.market import daily_summary, poll_market, poll_tvl, poll_fees, weekly_tvl_summary
+from bot.sources.atlas_digest import weekly_atlas_digest, atlas_change_summary
 from bot.sources.twitter import poll_twitter
 from bot.sources.web import poll_web
 from bot.sources.onchain import poll_onchain
@@ -83,6 +84,15 @@ async def _scheduled_weekly_tvl() -> None:
         await db.close()
 
 
+async def _scheduled_weekly_atlas() -> None:
+    db = await get_db()
+    try:
+        await atlas_change_summary(db)
+        await weekly_atlas_digest(db)
+    finally:
+        await db.close()
+
+
 async def main() -> None:
     logger.info("Starting wolfsclaw-telegram bot…")
 
@@ -106,12 +116,30 @@ async def main() -> None:
         max_instances=1,
     )
 
-    # Every Monday at 09:00 UTC
+    # Every Monday at 09:00 UTC — TVL summary
     scheduler.add_job(
         _scheduled_weekly_tvl,
         CronTrigger(day_of_week="mon", hour=9, minute=0),
         id="weekly_tvl",
         name="Weekly TVL summary",
+        max_instances=1,
+    )
+
+    # Every Monday at 09:30 UTC — Atlas digest (PRs + recent commits)
+    scheduler.add_job(
+        _scheduled_weekly_atlas,
+        CronTrigger(day_of_week="mon", hour=9, minute=30),
+        id="weekly_atlas",
+        name="Weekly Atlas digest",
+        max_instances=1,
+    )
+
+    # Every Friday at 12:00 UTC — Atlas PR digest (Atlas Axis posts Fridays)
+    scheduler.add_job(
+        _scheduled_weekly_atlas,
+        CronTrigger(day_of_week="fri", hour=12, minute=0),
+        id="friday_atlas",
+        name="Friday Atlas digest",
         max_instances=1,
     )
 
