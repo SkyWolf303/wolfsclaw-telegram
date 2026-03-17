@@ -59,22 +59,40 @@ def _pr_age(created_at: str) -> str:
     return age_label(dt) if dt else ""
 
 
-async def weekly_atlas_digest(db) -> None:
-    """Post a weekly digest of open Atlas PRs, grouped by category."""
-    logger.info("Building weekly Atlas PR digest…")
+async def _fetch_prs_from_tracker_or_github() -> list[dict]:
+    """Try tracker API first, fall back to GitHub."""
+    from bot.sources.tracker_client import get_open_prs as tracker_get_prs
+    tracker_prs = await tracker_get_prs(limit=30)
+    if tracker_prs is not None:
+        logger.info("Using Atlas Tracker API for PRs (%d)", len(tracker_prs))
+        # Normalize tracker format to match GitHub API format
+        return [{
+            "number": p.get("pr_number", p.get("number")),
+            "title": p.get("title", ""),
+            "html_url": p.get("url", f"https://github.com/{_ATLAS_REPO}/pull/{p.get('pr_number', '')}"),
+            "user": {"login": p.get("author", "unknown")},
+            "created_at": p.get("created_at_gh", p.get("created_at", "")),
+        } for p in tracker_prs]
 
+    # Fallback to GitHub direct
+    logger.info("Tracker unavailable — falling back to GitHub API for PRs")
     async with aiohttp.ClientSession() as session:
         try:
             url = f"{_GH_API}/repos/{_ATLAS_REPO}/pulls?state=open&per_page=30"
             async with session.get(url, timeout=_TIMEOUT,
                                    headers=_gh_headers()) as resp:
-                if resp.status != 200:
-                    logger.warning("GitHub PRs returned %d", resp.status)
-                    return
-                prs = await resp.json()
+                if resp.status == 200:
+                    return await resp.json()
         except Exception as e:
-            logger.error("Atlas digest fetch error: %s", e)
-            return
+            logger.error("GitHub PRs fallback error: %s", e)
+    return []
+
+
+async def weekly_atlas_digest(db) -> None:
+    """Post a weekly digest of open Atlas PRs, grouped by category."""
+    logger.info("Building weekly Atlas PR digest…")
+
+    prs = await _fetch_prs_from_tracker_or_github()
 
     if not prs:
         logger.info("No open Atlas PRs")
