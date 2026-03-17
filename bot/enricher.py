@@ -49,8 +49,9 @@ Rules:
 - Line 1: keep the original emoji + category label, then " · WolfsClaw" appended (e.g. "🔔 Sky Forum · WolfsClaw", "📊 Market Update · WolfsClaw", "🐺 @handle · WolfsClaw")
 - Line 2: "by [Author]" — use the real author name/handle if known; if it's an org post use the org name
 - Line 3: ONE sentence. Clear, specific, jargon-explained. Say WHO did WHAT and WHY it matters. No "it was announced that". No fluff.
-- Line 4: 🔗 <a href="...">Source</a> — always include the original URL
+- Line 4: 🔗 <a href="...">Source</a> — ALWAYS include the original URL, NEVER drop it
 - Max 4 lines. No extra commentary. No "Note:", "Summary:", "In conclusion:"
+- CRITICAL: Every <a href="..."> tag from the input MUST appear in the output. Never remove links.
 - Output ONLY the Telegram message. Nothing else.
 
 Examples of good Line 3:
@@ -175,6 +176,16 @@ async def enrich(raw_text: str) -> str:
                 if resp.status == 200:
                     data = await resp.json()
                     improved = data["choices"][0]["message"]["content"].strip()
+
+                    # Safety check: if Grok dropped links, fall back to raw text
+                    import re
+                    raw_links = set(re.findall(r'href="([^"]+)"', raw_text))
+                    improved_links = set(re.findall(r'href="([^"]+)"', improved))
+                    if raw_links and not raw_links.issubset(improved_links):
+                        dropped = raw_links - improved_links
+                        logger.warning("Grok dropped %d link(s) — using raw text: %s", len(dropped), dropped)
+                        return raw_text
+
                     logger.debug("Grok enriched post (%d→%d chars)", len(raw_text), len(improved))
                     return improved
                 else:

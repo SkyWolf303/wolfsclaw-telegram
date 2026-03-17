@@ -101,7 +101,7 @@ async def weekly_atlas_digest(db) -> None:
             author = pr.get("user", {}).get("login", "")
             age = _pr_age(pr.get("created_at", ""))
             age_str = f" · {age}" if age else ""
-            lines.append(f'• <a href="{url}">#{number}</a> {escape(title)} <i>@{escape(author)}{age_str}</i>')
+            lines.append(f'• <a href="{url}">#{number} — {escape(title)}</a>\n  <i>@{escape(author)}{age_str} · <a href="{url}">GitHub</a></i>')
         lines.append("")
 
     lines.append(f'🔗 <a href="https://github.com/{_ATLAS_REPO}/pulls">All open PRs on GitHub</a>')
@@ -164,8 +164,7 @@ async def atlas_change_summary(db) -> None:
                   or commit.get("author", {}).get("login", ""))
         url = commit.get("html_url", "")
         age = age_label(dt)
-        lines.append(f'• <a href="{url}">{escape(msg_text[:100])}</a>')
-        lines.append(f'  <i>by {escape(author)} · {age}</i>')
+        lines.append(f'• <a href="{url}">{escape(msg_text[:100])}</a>\n  <i>by {escape(author)} · {age} · <a href="{url}">GitHub</a></i>')
 
     msg = "\n".join(lines)
     await send_message(msg, post_type="atlas_weekly_changes", db=db, priority=4, enrich=False)
