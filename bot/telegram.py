@@ -89,6 +89,25 @@ async def send_message(
     Priority: 1=urgent (breaking governance), 3=high (forum VIP/Atlas),
               5=normal (market/TVL/twitter), 7=low (web/insights)
     """
+    # Fast keyword pre-filter — drop obvious ads without an API call
+    _text_lower = text.lower()
+    _ad_signals = [
+        "earn up to", "apy now", "limited time", "click here to", "sign up now",
+        "don't miss out", "exclusive offer", "join our waitlist", "referral",
+        "hackathon", "we're hiring", "job opening", "giveaway", "win ",
+        "sponsored", "ad:", "promoted", "try it now", "get started today",
+        "liquidity mining", "boost your yield",
+    ]
+    if any(sig in _text_lower for sig in _ad_signals):
+        logger.info("Keyword pre-filter dropped ad: %s…", text[:60])
+        return
+
+    # Grok ad filter — catches subtler promotional content
+    if XAI_API_KEY:
+        from bot.enricher import is_ad
+        if await is_ad(text):
+            return  # silently dropped
+
     # Enrich with Grok before dedup check
     if enrich and XAI_API_KEY:
         from bot.enricher import enrich as grok_enrich

@@ -15,7 +15,23 @@ logger = logging.getLogger(__name__)
 XAI_BASE_URL = "https://api.x.ai/v1/chat/completions"
 XAI_MODEL = "grok-3-latest"
 
-SYSTEM_PROMPT = """You are the editor for WolfsClaw's Den — a Sky ecosystem intelligence channel run by WolfsClaw.
+AD_FILTER_PROMPT = """You are a strict content filter for a Sky ecosystem intelligence channel.
+Your only job: decide if this content is INTELLIGENCE or ADVERTISING.
+
+INTELLIGENCE (approve ✅): governance proposals, protocol changes, parameter updates, settlement reports,
+new agent launches, Atlas edits, TVL/metric moves, risk assessments, technical deployments,
+security events, on-chain activity, regulatory news, meaningful ecosystem analysis.
+
+ADVERTISING (reject ❌): promotional posts, yield farming ads ("earn X% APY now!"),
+product marketing ("try our new feature"), partnership announcements with no governance impact,
+event invites, hackathon promotions, job postings, giveaways, generic "we're excited to announce",
+liquidity mining incentives, referral programs, anything that reads like a press release or ad copy.
+
+Reply with ONLY one word: APPROVE or REJECT. Nothing else."""
+
+
+SYSTEM_PROMPT = """You are the editor for WolfsClaw's Den — a Sky ecosystem intelligence channel.
+This channel is INTELLIGENCE ONLY. No ads, no promotions, no hype. Governance, protocol mechanics, data.
 You have deep knowledge of Sky/MakerDAO governance: the agent hierarchy (Core Council → Guardians → Primes → Halos),
 key actors (Spark, Grove, Keel, Obex, Skybase, Soter Labs, Atlas Axis, Rune, Phoenix Labs, BA Labs, Steakhouse, etc.),
 governance mechanics (Atlas edits, weekly spell cycles, MSC settlements, StarGuards, SpellCore),
@@ -47,6 +63,41 @@ Examples of bad Line 3:
 ❌ "A new report has been published." (too vague)
 ❌ "This is important for governance." (no specifics)
 ❌ "Sky ecosystem news." (meaningless)"""
+
+
+async def is_ad(raw_text: str) -> bool:
+    """Returns True if content looks like advertising — should be dropped."""
+    if not XAI_API_KEY:
+        return False  # can't filter without key, let it through
+
+    payload = {
+        "model": XAI_MODEL,
+        "messages": [
+            {"role": "system", "content": AD_FILTER_PROMPT},
+            {"role": "user", "content": raw_text[:800]},
+        ],
+        "max_tokens": 5,
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                XAI_BASE_URL, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    verdict = data["choices"][0]["message"]["content"].strip().upper()
+                    if "REJECT" in verdict:
+                        logger.info("Ad filter REJECTED: %s…", raw_text[:80])
+                        return True
+    except Exception:
+        logger.debug("Ad filter check failed — letting content through")
+    return False
 
 
 async def enrich(raw_text: str) -> str:
