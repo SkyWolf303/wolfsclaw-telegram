@@ -128,4 +128,4 @@ async def send_message(
         return
 
     from bot.queue import get_queue
-    await get_queue().push(text, post_type=post_type, db=db, priority=priority, source_time=source_time)
+    await get_queue().push(text, post_type=post_type, priority=priority, source_time=source_time)

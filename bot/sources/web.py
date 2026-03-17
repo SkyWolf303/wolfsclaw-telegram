@@ -109,6 +109,6 @@ async def poll_web(db) -> None:
                 if await is_post_duplicate(db, text):
                     continue
 
-                await send_message(text, priority=7, source_time=source_time)
+                await send_message(text, post_type=f"web_{label}", priority=7, db=db, source_time=source_time)
                 await log_post(db, f"web_{label}", text)
                 logger.info("Posted web result [%s]: %s", label, title)

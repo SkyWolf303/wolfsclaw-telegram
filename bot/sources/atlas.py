@@ -125,7 +125,7 @@ async def poll_atlas(db) -> None:
                         message = (c.get("commit", {}).get("message", "") or "").split("\n")[0]
                         author = (
                             c.get("commit", {}).get("author", {}).get("name", "")
-                            or c.get("author", {}).get("login", "unknown")
+                            or (c.get("author") or {}).get("login", "unknown")
                         )
                         html_url = c.get("html_url", "")
 

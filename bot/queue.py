@@ -10,7 +10,7 @@ Ensures posts stream gracefully:
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -27,7 +27,6 @@ BURST_LIMIT: int = 2
 class QueuedMessage:
     text: str
     post_type: str = "general"
-    db: object = field(default=None, repr=False)
     priority: int = 5
     source_time: Optional[datetime] = None  # verified from the source
 
@@ -44,7 +43,6 @@ class MessageQueue:
         self,
         text: str,
         post_type: str = "general",
-        db=None,
         priority: int = 5,
         source_time: Optional[datetime] = None,
     ) -> bool:
@@ -65,7 +63,6 @@ class MessageQueue:
         msg = QueuedMessage(
             text=text,
             post_type=post_type,
-            db=db,
             priority=priority,
             source_time=source_time,
         )
@@ -103,47 +100,54 @@ class MessageQueue:
 
     async def _dispatch_loop(self) -> None:
         from bot.telegram import _send_raw
+        from bot.db import get_db
 
-        while self._running:
-            try:
+        # Dispatcher owns its own DB connection — never relies on caller's
+        db = await get_db()
+
+        try:
+            while self._running:
                 try:
-                    _, _, msg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    continue
+                    try:
+                        _, _, msg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        continue
 
-                now = time.monotonic()
-                elapsed = now - self._last_sent_at
+                    now = time.monotonic()
+                    elapsed = now - self._last_sent_at
 
-                if elapsed < MIN_INTERVAL_S:
-                    wait = MIN_INTERVAL_S - elapsed
-                    logger.debug("Rate limit: waiting %.0fs before next post", wait)
-                    await asyncio.sleep(wait)
+                    if elapsed < MIN_INTERVAL_S:
+                        wait = MIN_INTERVAL_S - elapsed
+                        logger.debug("Rate limit: waiting %.0fs before next post", wait)
+                        await asyncio.sleep(wait)
 
-                if self._consecutive_count >= BURST_LIMIT:
-                    logger.info(
-                        "Burst limit (%d posts) — cooling down %.0fs",
-                        self._consecutive_count,
-                        BURST_COOLDOWN_S,
-                    )
-                    await asyncio.sleep(BURST_COOLDOWN_S)
-                    self._consecutive_count = 0
+                    if self._consecutive_count >= BURST_LIMIT:
+                        logger.info(
+                            "Burst limit (%d posts) — cooling down %.0fs",
+                            self._consecutive_count,
+                            BURST_COOLDOWN_S,
+                        )
+                        await asyncio.sleep(BURST_COOLDOWN_S)
+                        self._consecutive_count = 0
 
-                success = await _send_raw(msg.text, msg.post_type, msg.db)
+                    success = await _send_raw(msg.text, msg.post_type, db)
 
-                if success:
-                    self._last_sent_at = time.monotonic()
-                    self._consecutive_count += 1
-                    remaining = self._queue.qsize()
-                    if remaining > 0:
-                        logger.info("Sent %s — %d more in queue", msg.post_type, remaining)
+                    if success:
+                        self._last_sent_at = time.monotonic()
+                        self._consecutive_count += 1
+                        remaining = self._queue.qsize()
+                        if remaining > 0:
+                            logger.info("Sent %s — %d more in queue", msg.post_type, remaining)
 
-                self._queue.task_done()
+                    self._queue.task_done()
 
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception("Dispatcher loop error")
-                await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    logger.exception("Dispatcher loop error")
+                    await asyncio.sleep(5)
+        finally:
+            await db.close()
 
 
 _message_queue: MessageQueue | None = None

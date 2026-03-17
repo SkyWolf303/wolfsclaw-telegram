@@ -12,6 +12,7 @@ from html import escape
 
 import aiohttp
 
+from bot.config import GITHUB_TOKEN
 from bot.telegram import send_message
 from bot.timeutils import age_label, parse_iso
 
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 _GH_API = "https://api.github.com"
 _ATLAS_REPO = "sky-ecosystem/next-gen-atlas"
 _TIMEOUT = aiohttp.ClientTimeout(total=20)
+
+
+def _gh_headers() -> dict[str, str]:
+    headers = {"Accept": "application/vnd.github+json"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    return headers
 
 # Atlas scope labels for human-readable output
 SCOPE_LABELS = {
@@ -59,7 +67,7 @@ async def weekly_atlas_digest(db) -> None:
         try:
             url = f"{_GH_API}/repos/{_ATLAS_REPO}/pulls?state=open&per_page=30"
             async with session.get(url, timeout=_TIMEOUT,
-                                   headers={"Accept": "application/vnd.github+json"}) as resp:
+                                   headers=_gh_headers()) as resp:
                 if resp.status != 200:
                     logger.warning("GitHub PRs returned %d", resp.status)
                     return
@@ -124,7 +132,7 @@ async def atlas_change_summary(db) -> None:
             path = quote("Sky Atlas/Sky Atlas.md")
             url = f"{_GH_API}/repos/{_ATLAS_REPO}/commits?path={path}&per_page=10"
             async with session.get(url, timeout=_TIMEOUT,
-                                   headers={"Accept": "application/vnd.github+json"}) as resp:
+                                   headers=_gh_headers()) as resp:
                 if resp.status != 200:
                     return
                 commits = await resp.json()
@@ -161,7 +169,7 @@ async def atlas_change_summary(db) -> None:
     for commit, dt in recent:
         msg_text = commit.get("commit", {}).get("message", "").split("\n")[0]
         author = (commit.get("commit", {}).get("author", {}).get("name", "")
-                  or commit.get("author", {}).get("login", ""))
+                  or (commit.get("author") or {}).get("login", "unknown"))
         url = commit.get("html_url", "")
         age = age_label(dt)
         lines.append(f'• <a href="{url}">{escape(msg_text[:100])}</a>\n  <i>by {escape(author)} · {age} · <a href="{url}">GitHub</a></i>')
