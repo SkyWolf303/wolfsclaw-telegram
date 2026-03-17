@@ -1,16 +1,20 @@
-"""Grok enrichment layer — improves raw content before posting to Telegram.
+"""Enrichment layer — uses Claude Sonnet (Anthropic) by default, falls back to xAI Grok.
 
-Uses xAI's Grok API to add context and sharpen framing for a Sky ecosystem audience.
-Every post follows a strict format: who, why it matters, source link.
+Every post gets context-aware summarization before hitting Telegram.
 """
 
 import logging
-
+import re
 import aiohttp
 
 from bot.config import XAI_API_KEY
 
 logger = logging.getLogger(__name__)
+
+import os
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 XAI_BASE_URL = "https://api.x.ai/v1/chat/completions"
 XAI_MODEL = "grok-3-latest"
@@ -46,69 +50,82 @@ Your job: rewrite a raw content snippet into a polished Telegram post following 
 
 Rules:
 - HTML formatting ONLY: <b>, <i>, <a href="...">, <code>. No markdown.
-- Line 1: keep the original emoji + category label, then " · WolfsClaw" appended (e.g. "🔔 Sky Forum · WolfsClaw", "📊 Market Update · WolfsClaw", "🐺 @handle · WolfsClaw")
-- Line 2: "by [Author]" — use the real author name/handle if known; if it's an org post use the org name
-- Line 3: ONE sentence. Clear, specific, jargon-explained. Say WHO did WHAT and WHY it matters. No "it was announced that". No fluff.
+- Line 1: keep the original emoji + category label, then " · WolfsClaw" appended
+- Line 2: "by [Author]" — use the real author name/handle if known
+- Line 3: ONE sentence. Clear, specific, jargon-explained. WHO did WHAT and WHY it matters. No fluff.
 - Line 4: 🔗 <a href="...">Source</a> — ALWAYS include the original URL, NEVER drop it
 - Max 4 lines. No extra commentary. No "Note:", "Summary:", "In conclusion:"
 - CRITICAL: Every <a href="..."> tag from the input MUST appear in the output. Never remove links.
-- Output ONLY the Telegram message. Nothing else.
-
-Examples of good Line 3:
-✅ "Rune proposes cutting the SKY buyback rate by 87% to preserve protocol reserves amid uncertain macro conditions."
-✅ "Atlas Axis merged edits removing JAAA from Grove's Direct Exposures, tightening the list of allowed CLO assets."
-✅ "Soter Labs published MSC #6, the February settlement confirming $24M net revenue across Amatsu's three Primes."
-✅ "Spark's TVL on DefiLlama dropped 6.2% in 24h, suggesting capital rotation out of SparkLend savings."
-
-Examples of bad Line 3:
-❌ "A new report has been published." (too vague)
-❌ "This is important for governance." (no specifics)
-❌ "Sky ecosystem news." (meaningless)"""
+- Output ONLY the Telegram message. Nothing else."""
 
 
-async def is_ad(raw_text: str) -> bool:
-    """Returns True if content looks like advertising — should be dropped."""
-    if not XAI_API_KEY:
-        return False  # can't filter without key, let it through
-
-    payload = {
-        "model": XAI_MODEL,
-        "messages": [
-            {"role": "system", "content": AD_FILTER_PROMPT},
-            {"role": "user", "content": raw_text[:800]},
-        ],
-        "max_tokens": 5,
-        "temperature": 0.0,
-    }
+async def _call_anthropic(prompt: str, system: str, max_tokens: int = 400) -> str | None:
     headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
-        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": prompt}],
     }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                XAI_BASE_URL, json=payload, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
+                ANTHROPIC_URL, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    verdict = data["choices"][0]["message"]["content"].strip().upper()
-                    if "REJECT" in verdict:
-                        logger.info("Ad filter REJECTED: %s…", raw_text[:80])
-                        return True
+                    return data["content"][0]["text"].strip()
+                else:
+                    body = await resp.text()
+                    logger.warning("Anthropic API returned %d: %s", resp.status, body[:200])
     except Exception:
-        logger.debug("Ad filter check failed — letting content through")
+        logger.exception("Anthropic call failed")
+    return None
+
+
+async def _call_xai(system: str, user: str, max_tokens: int = 400) -> str | None:
+    if not XAI_API_KEY:
+        return None
+    payload = {
+        "model": XAI_MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+    }
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                XAI_BASE_URL, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["choices"][0]["message"]["content"].strip()
+    except Exception:
+        logger.exception("xAI call failed")
+    return None
+
+
+async def is_ad(raw_text: str) -> bool:
+    """Returns True if content looks like advertising."""
+    result = None
+    if ANTHROPIC_API_KEY:
+        result = await _call_anthropic(raw_text[:800], AD_FILTER_PROMPT, max_tokens=5)
+    elif XAI_API_KEY:
+        result = await _call_xai(AD_FILTER_PROMPT, raw_text[:800], max_tokens=5)
+    if result and "REJECT" in result.upper():
+        logger.info("Ad filter REJECTED: %s…", raw_text[:80])
+        return True
     return False
 
 
 async def narrate_atlas_diff(diff_excerpt: str, commit_message: str) -> str:
-    """Use Grok to generate a plain-English GovOps impact summary for an Atlas diff.
-    Returns a 2-3 sentence summary of what changed and what it means for governance.
-    Falls back to empty string on failure.
-    """
-    if not XAI_API_KEY:
-        return ""
-
     prompt = f"""You are a Sky ecosystem governance expert. An Atlas edit was just committed:
 
 Commit: {commit_message}
@@ -122,76 +139,32 @@ Write 2-3 plain English sentences explaining:
 
 Be specific and technical. No fluff. Output ONLY the sentences, nothing else."""
 
-    payload = {
-        "model": XAI_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 200,
-        "temperature": 0.1,
-    }
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                XAI_BASE_URL, json=payload, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data["choices"][0]["message"]["content"].strip()
-    except Exception:
-        logger.debug("Atlas narration failed")
-    return ""
+    result = None
+    if ANTHROPIC_API_KEY:
+        result = await _call_anthropic(prompt, "You are a Sky ecosystem governance expert.", max_tokens=200)
+    elif XAI_API_KEY:
+        result = await _call_xai("You are a Sky ecosystem governance expert.", prompt, max_tokens=200)
+    return result or ""
 
 
 async def enrich(raw_text: str) -> str:
-    """Pass raw_text through Grok and return a formatted version.
-    Falls back to raw_text if API call fails or key not set."""
-    if not XAI_API_KEY:
+    """Enrich raw_text with Claude/Grok. Falls back to raw on failure."""
+    result = None
+    if ANTHROPIC_API_KEY:
+        result = await _call_anthropic(f"Rewrite this into the required format:\n\n{raw_text}", SYSTEM_PROMPT)
+    elif XAI_API_KEY:
+        result = await _call_xai(SYSTEM_PROMPT, f"Rewrite this into the required format:\n\n{raw_text}")
+
+    if not result:
         return raw_text
 
-    payload = {
-        "model": XAI_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Rewrite this into the required format:\n\n{raw_text}"},
-        ],
-        "max_tokens": 350,
-        "temperature": 0.2,
-    }
+    # Safety: if links were dropped, fall back to raw
+    raw_links = set(re.findall(r'href="([^"]+)"', raw_text))
+    improved_links = set(re.findall(r'href="([^"]+)"', result))
+    if raw_links and not raw_links.issubset(improved_links):
+        dropped = raw_links - improved_links
+        logger.warning("AI dropped %d link(s) — using raw text: %s", len(dropped), dropped)
+        return raw_text
 
-    headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                XAI_BASE_URL,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    improved = data["choices"][0]["message"]["content"].strip()
-
-                    # Safety check: if Grok dropped links, fall back to raw text
-                    import re
-                    raw_links = set(re.findall(r'href="([^"]+)"', raw_text))
-                    improved_links = set(re.findall(r'href="([^"]+)"', improved))
-                    if raw_links and not raw_links.issubset(improved_links):
-                        dropped = raw_links - improved_links
-                        logger.warning("Grok dropped %d link(s) — using raw text: %s", len(dropped), dropped)
-                        return raw_text
-
-                    logger.debug("Grok enriched post (%d→%d chars)", len(raw_text), len(improved))
-                    return improved
-                else:
-                    body = await resp.text()
-                    logger.warning("xAI API returned %d: %s", resp.status, body[:200])
-    except Exception:
-        logger.exception("Grok enrichment failed — using raw text")
-
-    return raw_text
+    logger.debug("Enriched post (%d→%d chars)", len(raw_text), len(result))
+    return result
