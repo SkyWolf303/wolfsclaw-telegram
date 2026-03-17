@@ -100,6 +100,12 @@ async def send_message(
         "hackathon", "we're hiring", "job opening", "giveaway", "win ",
         "sponsored", "ad:", "promoted", "try it now", "get started today",
         "liquidity mining", "boost your yield",
+        # Hype / social influence noise
+        "are you paying attention", "real capital is shifting", "this is huge",
+        "don't sleep on", "going to explode", "100x", "moon soon",
+        "alpha leak", "hidden gem", "this changes everything", "i called it",
+        "follow for more", "like and retweet", "not financial advice but",
+        "nfa but", "aping in", "thread 🧵",
     ]
     if any(sig in _text_lower for sig in _ad_signals):
         logger.info("Keyword pre-filter dropped ad: %s…", text[:60])

@@ -28,6 +28,41 @@ _API_BASE = "https://api.twitter.com/2"
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
 _TIMELINE_SLEEP = 0.5
 
+# Minimum follower count for keyword search hits (not applied to monitored accounts)
+MIN_FOLLOWERS_FOR_SEARCH = 500
+
+# Hype phrases — reject tweets that are pure social media influence noise
+_HYPE_PHRASES = [
+    "are you paying attention",
+    "real capital is shifting",
+    "you need to know about",
+    "this is huge",
+    "don't sleep on",
+    "going to explode",
+    "massive gains",
+    "100x",
+    "moon soon",
+    "buy now",
+    "last chance",
+    "alpha leak",
+    "hidden gem",
+    "this changes everything",
+    "i called it",
+    "thread 🧵",
+    "follow for more",
+    "like and retweet",
+    "not financial advice but",
+    "nfa but",
+    "aping in",
+    "dyor but",
+]
+
+
+def _is_hype_tweet(text: str) -> bool:
+    """Returns True if tweet is social media hype with no analytical value."""
+    lower = text.lower()
+    return any(phrase in lower for phrase in _HYPE_PHRASES)
+
 
 def _tw_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {X_BEARER_TOKEN}"}
@@ -136,7 +171,7 @@ async def _poll_search(
         f"?query={quote(query)}"
         f"&max_results=10"
         f"&tweet.fields=created_at,text,author_id"
-        f"&expansions=author_id&user.fields=username"
+        f"&expansions=author_id&user.fields=username,public_metrics"
     )
     try:
         async with session.get(url, headers=_tw_headers(), timeout=_TIMEOUT) as resp:
@@ -151,9 +186,13 @@ async def _poll_search(
         logger.error("Twitter search error for '%s': %s", query, e)
         return 0
 
-    users_map: dict[str, str] = {}
+    # Build author map with follower counts
+    users_map: dict[str, dict] = {}
     for u in data.get("includes", {}).get("users", []):
-        users_map[u["id"]] = u.get("username", "unknown")
+        users_map[u["id"]] = {
+            "username": u.get("username", "unknown"),
+            "followers": u.get("public_metrics", {}).get("followers_count", 0),
+        }
 
     posted = 0
     for tweet in data.get("data", []):
@@ -162,14 +201,26 @@ async def _poll_search(
             continue
 
         source_time = parse_iso(tweet.get("created_at"))
-
         if not is_fresh(source_time):
             logger.debug("Skipping stale search tweet %s", tweet_id)
             continue
 
         author_id = tweet.get("author_id", "")
-        username = users_map.get(author_id, "unknown")
+        author = users_map.get(author_id, {"username": "unknown", "followers": 0})
+        username = author["username"]
+        followers = author["followers"]
         text = tweet.get("text", "")
+
+        # Filter: minimum followers for keyword search hits
+        if followers < MIN_FOLLOWERS_FOR_SEARCH:
+            logger.debug("Skipping low-follower search tweet (@%s, %d followers)", username, followers)
+            continue
+
+        # Filter: hype/influence noise
+        if _is_hype_tweet(text):
+            logger.debug("Skipping hype tweet from @%s", username)
+            continue
+
         msg = _format_search_tweet(username, text, tweet_id, source_time)
         await send_message(msg, post_type="twitter_search", db=db, source_time=source_time)
         await mark_tweet_seen(db, tweet_id, username, "search", query)
