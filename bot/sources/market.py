@@ -121,6 +121,7 @@ async def poll_market(db) -> None:
         msg = "<b>📊 Market Update</b>\n" + "\n".join(alert_parts)
         if sky_mcap is not None:
             msg += f"\nSKY Market Cap: {_fmt_number(sky_mcap, prefix='$')}"
+        msg += '\n🔗 <a href="https://sky-ten-alpha.vercel.app">Sky Live Data</a> · <a href="https://defillama.com/protocol/sky-lending">DefiLlama</a>'
         await send_message(msg, post_type="market_update", db=db)
 
     # Save snapshots
@@ -153,7 +154,13 @@ async def poll_tvl(db) -> None:
             await save_tvl_snapshot(db, slug, tvl)
 
     if alerts:
-        msg = "<b>🏦 TVL Update</b>\n" + "\n".join(alerts)
+        alert_lines = "\n".join(alerts)
+        links = "\n".join(
+            f'🔗 <a href="https://defillama.com/protocol/{slug}">{escape(slug)}</a>'
+            for slug in DEFILLAMA_SLUGS
+            if any(slug in a for a in alerts)
+        )
+        msg = f"<b>🏦 TVL Update</b>\n{alert_lines}\n{links}"
         await send_message(msg, post_type="tvl_update", db=db)
 
     logger.info("TVL poll done — %d alerts", len(alerts))
@@ -191,6 +198,7 @@ async def daily_summary(db) -> None:
     if sky_mcap is not None:
         lines.append(f"SKY Market Cap: {_fmt_number(sky_mcap, prefix='$')}")
 
+    lines.append('🔗 <a href="https://insights.skyeco.com">Sky Insights</a> · <a href="https://defillama.com/protocol/sky-lending">DefiLlama</a>')
     msg = "\n".join(lines)
     await send_message(msg, post_type="daily_summary", db=db)
     await save_market_snapshot(db, "USDS", None, usds_supply, None)
@@ -250,6 +258,7 @@ async def weekly_tvl_summary(db) -> None:
             lines.append(f"  {escape(slug)}: {_fmt_number(tvl, prefix='$')}{delta}")
             await save_tvl_snapshot(db, slug, tvl)
 
+    lines.append('🔗 <a href="https://defillama.com/protocol/sky-lending">DefiLlama — Sky</a>')
     msg = "\n".join(lines)
     await send_message(msg, post_type="weekly_tvl", db=db)
     logger.info("Weekly TVL summary posted")
