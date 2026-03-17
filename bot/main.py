@@ -91,7 +91,7 @@ async def main() -> None:
     # Every 4 hours: run all pollers
     scheduler.add_job(
         _scheduled_poll,
-        IntervalTrigger(hours=4),
+        IntervalTrigger(hours=1),
         id="poll_all",
         name="Poll all sources",
         max_instances=1,
