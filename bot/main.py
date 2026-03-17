@@ -16,11 +16,12 @@ from bot.queue import get_queue
 from bot.sources.atlas import poll_atlas
 from bot.sources.forum import poll_forum
 from bot.sources.insights import poll_insights
-from bot.sources.market import daily_summary, poll_market, poll_tvl, poll_fees, weekly_tvl_summary
+from bot.sources.market import daily_summary, poll_market, poll_tvl, poll_fees, poll_revenue, weekly_tvl_summary
 from bot.sources.atlas_digest import weekly_atlas_digest, atlas_change_summary
 from bot.sources.twitter import poll_twitter
 from bot.sources.web import poll_web
 from bot.sources.onchain import poll_onchain
+from bot.sources.weekly_digest import weekly_digest
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -39,6 +40,7 @@ POLLERS = [
     ("web", poll_web),
     ("onchain", poll_onchain),
     ("fees", poll_fees),
+    ("revenue", poll_revenue),
 ]
 
 
@@ -93,6 +95,14 @@ async def _scheduled_weekly_atlas() -> None:
         await db.close()
 
 
+async def _scheduled_weekly_digest() -> None:
+    db = await get_db()
+    try:
+        await weekly_digest(db)
+    finally:
+        await db.close()
+
+
 async def main() -> None:
     logger.info("Starting wolfsclaw-telegram bot…")
 
@@ -140,6 +150,15 @@ async def main() -> None:
         CronTrigger(day_of_week="fri", hour=12, minute=0),
         id="friday_atlas",
         name="Friday Atlas digest",
+        max_instances=1,
+    )
+
+    # Every Friday at 16:00 UTC — Weekly intelligence digest
+    scheduler.add_job(
+        _scheduled_weekly_digest,
+        CronTrigger(day_of_week="fri", hour=16, minute=0),
+        id="weekly_digest",
+        name="Weekly intelligence digest",
         max_instances=1,
     )
 

@@ -219,4 +219,67 @@ async def poll_onchain(db) -> None:
             await send_message(msg, post_type="gov_poll", db=db, priority=3)
             await log_post(db, "gov_poll", content_hash)
 
+        # ── 5. Poll Outcome Tracking ───────────────────────────
+        # Check if any recently closed polls need outcome reporting
+        for poll in polls:
+            poll_id = poll.get("pollId") or poll.get("id")
+            if not poll_id:
+                continue
+
+            end_date_str = poll.get("endDate", "")
+            if not end_date_str:
+                continue
+
+            from bot.timeutils import parse_iso, utcnow
+            end_date = parse_iso(end_date_str)
+            if not end_date or end_date > utcnow():
+                continue  # Still active
+
+            outcome_hash = _content_hash(f"poll_outcome_{poll_id}")
+            if await is_post_duplicate(db, outcome_hash):
+                continue
+
+            title = poll.get("title", "Governance Poll")
+            slug = poll.get("slug", str(poll_id))
+            poll_url = f"https://vote.sky.money/polling/{slug}"
+
+            # Fetch poll detail for tally
+            winning_option = "Results pending"
+            sky_votes_str = ""
+            voters_str = ""
+            try:
+                detail_url = f"{GOV_API_BASE}/polling/{poll_id}"
+                async with session.get(detail_url, timeout=_TIMEOUT) as resp:
+                    if resp.status == 200:
+                        detail = await resp.json()
+                        tally = detail.get("tally", {})
+                        options = detail.get("options", {})
+                        if tally:
+                            max_votes = 0
+                            for opt_id, vote_count in tally.items():
+                                try:
+                                    vc = float(vote_count)
+                                    if vc > max_votes:
+                                        max_votes = vc
+                                        winning_option = options.get(str(opt_id), f"Option {opt_id}")
+                                except (ValueError, TypeError):
+                                    pass
+                            if max_votes > 0:
+                                sky_votes_str = f"\nSKY votes: {_fmt(max_votes)}"
+                        num_voters = detail.get("numUniqueVoters", "")
+                        if num_voters:
+                            voters_str = f"\nVoters: {num_voters}"
+            except Exception:
+                pass
+
+            msg = (
+                f"<b>✅ Poll Result</b>\n"
+                f"{escape(title[:200])}\n"
+                f"Winner: <b>{escape(winning_option)}</b>"
+                f"{escape(sky_votes_str)}{escape(voters_str)}\n"
+                f'🔗 <a href="{escape(poll_url)}">View result</a>'
+            )
+            await send_message(msg, post_type="poll_outcome", db=db, priority=3)
+            await log_post(db, "poll_outcome", outcome_hash)
+
     logger.info("On-chain poll done")

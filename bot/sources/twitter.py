@@ -113,6 +113,32 @@ async def _lookup_user_id(
     return None
 
 
+def _engagement_score(metrics: dict) -> int:
+    """Calculate engagement score from public_metrics."""
+    likes = metrics.get("like_count", 0) or 0
+    rts = metrics.get("retweet_count", 0) or 0
+    replies = metrics.get("reply_count", 0) or 0
+    return likes + rts * 2 + replies
+
+
+def _engagement_label(metrics: dict) -> str:
+    """Format engagement context string."""
+    likes = metrics.get("like_count", 0) or 0
+    rts = metrics.get("retweet_count", 0) or 0
+    if likes + rts == 0:
+        return ""
+    return f" (🔥 {likes} likes · {rts} RTs)"
+
+
+def _priority_from_engagement(score: int, default: int = 5) -> int:
+    """Escalate priority based on engagement score."""
+    if score > 500:
+        return 1  # breaking
+    if score > 100:
+        return 3  # high
+    return default
+
+
 async def _poll_timeline(
     session: aiohttp.ClientSession,
     username: str,
@@ -122,7 +148,7 @@ async def _poll_timeline(
     url = (
         f"{_API_BASE}/users/{user_id}/tweets"
         f"?max_results=10&exclude=retweets,replies"
-        f"&tweet.fields=created_at,text,author_id"
+        f"&tweet.fields=created_at,text,author_id,public_metrics"
         f"&expansions=author_id&user.fields=username"
     )
     try:
@@ -153,8 +179,15 @@ async def _poll_timeline(
             continue
 
         text = tweet.get("text", "")
+        metrics = tweet.get("public_metrics", {})
+        score = _engagement_score(metrics)
+        priority = _priority_from_engagement(score)
+        eng_label = _engagement_label(metrics)
+
         msg = _format_timeline_tweet(username, text, tweet_id, source_time)
-        await send_message(msg, post_type="twitter_timeline", db=db, source_time=source_time)
+        if eng_label:
+            msg += f"\n<i>{escape(eng_label)}</i>"
+        await send_message(msg, post_type="twitter_timeline", db=db, source_time=source_time, priority=priority)
         await mark_tweet_seen(db, tweet_id, username, "timeline")
         posted += 1
 

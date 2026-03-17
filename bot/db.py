@@ -76,6 +76,23 @@ CREATE TABLE IF NOT EXISTS cached_user_ids (
     twitter_id TEXT,
     cached_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS governance_polls_tracked (
+    poll_id TEXT PRIMARY KEY,
+    title TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'active',
+    winning_option TEXT,
+    sky_votes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS governance_executives_tracked (
+    address TEXT PRIMARY KEY,
+    title TEXT,
+    status TEXT DEFAULT 'posted',
+    passed INTEGER DEFAULT 0,
+    executed INTEGER DEFAULT 0
+);
 """
 
 

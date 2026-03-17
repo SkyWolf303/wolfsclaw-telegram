@@ -20,8 +20,14 @@ SKY_LIVE_URL = "https://sky-ten-alpha.vercel.app/api/get-sky-live"
 DEFILLAMA_TVL_URL = "https://api.llama.fi/tvl"
 DEFILLAMA_FEES_URL = "https://api.llama.fi/summary/fees"
 DEFILLAMA_PROTOCOL_URL = "https://api.llama.fi/protocol"
+DEFILLAMA_OVERVIEW_FEES_URL = "https://api.llama.fi/overview/fees?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true"
+DEFILLAMA_REVENUE_URL = "https://api.llama.fi/summary/fees/sky-lending?dataType=dailyRevenue"
 
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+# Revenue alert thresholds
+REVENUE_MILESTONE_THRESHOLD = 500_000  # $500K daily revenue
+REVENUE_RANK_ALERT = 3  # Alert if Sky ranks top-3 on any timeframe
 
 
 def _fmt_number(n: float | None, prefix: str = "", suffix: str = "") -> str:
@@ -198,6 +204,20 @@ async def daily_summary(db) -> None:
     if sky_mcap is not None:
         lines.append(f"SKY Market Cap: {_fmt_number(sky_mcap, prefix='$')}")
 
+    # Add 24h revenue
+    try:
+        async with aiohttp.ClientSession() as rev_session:
+            async with rev_session.get(DEFILLAMA_REVENUE_URL, timeout=_TIMEOUT) as resp:
+                if resp.status == 200:
+                    rev_data = await resp.json()
+                    chart = rev_data.get("totalDataChart", [])
+                    if chart:
+                        latest_rev = chart[-1][1] if chart[-1] else 0
+                        if latest_rev:
+                            lines.append(f"Sky 24h Revenue: {_fmt_number(latest_rev, prefix='$')}")
+    except Exception:
+        pass
+
     lines.append('🔗 <a href="https://insights.skyeco.com">Sky Insights</a> · <a href="https://defillama.com/protocol/sky-lending">DefiLlama</a>')
     msg = "\n".join(lines)
     await send_message(msg, post_type="daily_summary", db=db)
@@ -239,6 +259,73 @@ async def poll_fees(db) -> None:
                 logger.debug("Fees fetch error for %s: %s", slug, e)
 
     logger.info("Fees poll done")
+
+
+async def poll_revenue(db) -> None:
+    """Check Sky protocol revenue ranking and daily revenue milestones."""
+    logger.info("Polling protocol revenue…")
+
+    async with aiohttp.ClientSession() as session:
+        # 1. Check fee/revenue ranking across all protocols
+        try:
+            async with session.get(DEFILLAMA_OVERVIEW_FEES_URL, timeout=_TIMEOUT) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    protocols = data.get("protocols", [])
+                    # Find Sky in the ranking
+                    for proto in protocols:
+                        name = (proto.get("name", "") or "").lower()
+                        if name in ("sky", "sky-lending", "sky lending"):
+                            # Check various timeframe rankings
+                            for tf_key, tf_label in [("dailyFees", "24h"), ("total7d", "7d"), ("total30d", "30d")]:
+                                val = proto.get(tf_key)
+                                if val is None:
+                                    continue
+                                # Calculate rank for this timeframe
+                                rank = 1
+                                for other in protocols:
+                                    other_val = other.get(tf_key)
+                                    if other_val is not None and other_val > val:
+                                        rank += 1
+                                if rank <= REVENUE_RANK_ALERT:
+                                    rank_key = f"revenue_rank_{tf_label}_{rank}"
+                                    from bot.db import is_post_duplicate, log_post
+                                    if not await is_post_duplicate(db, rank_key):
+                                        msg = (
+                                            f"<b>🏆 Sky Revenue Ranking</b>\n"
+                                            f"Sky is #{rank} by protocol fees ({tf_label} timeframe)\n"
+                                            f"Fees: {_fmt_number(val, prefix='$')}\n"
+                                            f'🔗 <a href="https://defillama.com/fees">DefiLlama Fees</a>'
+                                        )
+                                        await send_message(msg, post_type="revenue_rank", db=db, priority=2)
+                                        await log_post(db, "revenue_rank", rank_key)
+                            break
+        except Exception as e:
+            logger.debug("Revenue ranking fetch error: %s", e)
+
+        # 2. Check daily revenue milestones
+        try:
+            async with session.get(DEFILLAMA_REVENUE_URL, timeout=_TIMEOUT) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    chart = data.get("totalDataChart", [])
+                    if chart:
+                        latest = chart[-1][1] if chart[-1] else 0
+                        if latest and latest > REVENUE_MILESTONE_THRESHOLD:
+                            milestone_key = f"revenue_milestone_{int(latest // REVENUE_MILESTONE_THRESHOLD)}"
+                            from bot.db import is_post_duplicate, log_post
+                            if not await is_post_duplicate(db, milestone_key):
+                                msg = (
+                                    f"<b>💰 Revenue Milestone</b>\n"
+                                    f"Sky daily revenue: {_fmt_number(latest, prefix='$')}\n"
+                                    f'🔗 <a href="https://defillama.com/protocol/sky-lending">DefiLlama</a>'
+                                )
+                                await send_message(msg, post_type="revenue_milestone", db=db, priority=3)
+                                await log_post(db, "revenue_milestone", milestone_key)
+        except Exception as e:
+            logger.debug("Revenue milestone fetch error: %s", e)
+
+    logger.info("Revenue poll done")
 
 
 async def weekly_tvl_summary(db) -> None:

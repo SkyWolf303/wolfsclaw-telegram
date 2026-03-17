@@ -93,12 +93,20 @@ FORUM_CATEGORY_ENDPOINTS: dict[str, str] = {
     "Sky Core": "/c/92/l/latest.json",
     "Spark Prime": "/c/84/l/latest.json",
     "Incubating Primes": "/c/99/l/latest.json",
+    "Governance": "/c/71/l/latest.json",
+    "Budget Transparency": "/c/100/l/latest.json",
 }
 FORUM_TAG_ENDPOINTS: dict[str, str] = {
     "Atlas Edit Proposals": "/tag/atlas-edit-weekly-proposal.json",
+    "Spell Discussion": "/tag/spell.json",
+    "Executive Vote": "/tag/executive-vote.json",
 }
 FORUM_SEARCH_ENDPOINTS: dict[str, str] = {
     "MSC Settlement": "/search.json?q=MSC+settlement+order:latest",
+    "Technical Scope": "/search.json?q=technical+scope+order:latest",
+    "Spell Payload": "/search.json?q=spell+payload+order:latest",
+    "OEA Report": "/search.json?q=OEA+report+order:latest",
+    "Governance Poll": "/search.json?q=governance+poll+order:latest",
 }
 
 # GitHub Atlas repo
