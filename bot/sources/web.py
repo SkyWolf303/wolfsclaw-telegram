@@ -9,6 +9,7 @@ import aiohttp
 from bot.config import BRAVE_API_KEY
 from bot.db import is_post_duplicate, log_post
 from bot.telegram import send_message
+from bot.timeutils import parse_iso, parse_unix, is_fresh, age_label
 
 logger = logging.getLogger(__name__)
 
@@ -81,20 +82,33 @@ async def poll_web(db) -> None:
                 if not url or not title:
                     continue
 
-                # Build message first so we can deduplicate on content
+                # Extract verified source timestamp from Brave result
+                # Brave returns 'page_age' (ISO string) and 'age' (human string)
+                source_time = parse_iso(result.get("page_age"))
+                if source_time is None:
+                    # Try 'age' field as fallback (sometimes a Unix timestamp)
+                    source_time = parse_unix(result.get("age"))
+
+                # Reject stale content — verified from Brave's page_age field
+                if not is_fresh(source_time):
+                    logger.debug("Skipping stale web result: %s (age=%s)", title[:60], source_time)
+                    continue
+
+                time_str = age_label(source_time) if source_time else ""
                 desc_line = f"\n{escape(description[:200])}" if description else ""
-                source_line = f"\n<i>{escape(source_name)}</i>" if source_name else ""
+                source_line = f"\n<i>{escape(source_name)}{' · ' + time_str if time_str else ''}</i>" if (source_name or time_str) else ""
 
                 text = (
                     f"<b>🌐 Web — {escape(label)}</b>\n"
                     f"<a href=\"{escape(url)}\">{escape(title)}</a>"
                     f"{desc_line}"
-                    f"{source_line}"
+                    f"{source_line}\n"
+                    f'🔗 <a href="{escape(url)}">Read more</a>'
                 )
 
                 if await is_post_duplicate(db, text):
                     continue
 
-                await send_message(text, priority=7)
+                await send_message(text, priority=7, source_time=source_time)
                 await log_post(db, f"web_{label}", text)
                 logger.info("Posted web result [%s]: %s", label, title)

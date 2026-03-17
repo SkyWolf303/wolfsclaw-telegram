@@ -10,6 +10,7 @@ import aiohttp
 from bot.config import ATLAS_FILE_PATH, ATLAS_REPO_NAME, ATLAS_REPO_OWNER, GITHUB_TOKEN
 from bot.db import is_commit_seen, is_pr_seen, mark_commit_seen, mark_pr_seen
 from bot.telegram import send_message
+from bot.timeutils import parse_iso, is_fresh, age_label
 
 logger = logging.getLogger(__name__)
 
@@ -133,15 +134,28 @@ async def poll_atlas(db) -> None:
                         scope_label = _sections_to_labels(sections)
                         priority = 2 if _is_high_priority(sections) else 3
 
+                        # Verified timestamp from GitHub commit metadata
+                        committed_at_str = (c.get("commit", {}).get("author", {}).get("date")
+                                           or c.get("commit", {}).get("committer", {}).get("date"))
+                        source_time = parse_iso(committed_at_str)
+
+                        if not is_fresh(source_time):
+                            logger.debug("Skipping stale Atlas commit %s", sha[:8])
+                            await mark_commit_seen(db, sha, message)  # mark so we don't recheck
+                            continue
+
+                        time_str = age_label(source_time)
                         lines = [f"<b>📜 Atlas Change</b>"]
                         lines.append(f"<b>by {escape(author)}</b>")
                         lines.append(escape(message[:200]))
                         if scope_label:
                             lines.append(f"<i>Touches: {escape(scope_label)}</i>")
+                        if time_str:
+                            lines.append(f"<i>Committed {time_str}</i>")
                         lines.append(f'🔗 <a href="{html_url}">View on GitHub</a>')
 
                         msg = "\n".join(lines)
-                        await send_message(msg, post_type="atlas_commit", priority=priority, db=db)
+                        await send_message(msg, post_type="atlas_commit", priority=priority, db=db, source_time=source_time)
                         await mark_commit_seen(db, sha, message)
                         posted += 1
 
@@ -175,15 +189,25 @@ async def poll_atlas(db) -> None:
                         scope_label = _sections_to_labels(sections)
                         priority = 2 if _is_high_priority(sections) else 3
 
+                        source_time = parse_iso(pr.get("created_at"))
+
+                        if not is_fresh(source_time):
+                            logger.debug("Skipping stale Atlas PR #%d", pr_number)
+                            await mark_pr_seen(db, pr_number, title)
+                            continue
+
+                        time_str = age_label(source_time)
                         lines = [f"<b>📜 Atlas — Open PR #{pr_number}</b>"]
                         lines.append(f"<b>by {escape(user)}</b>")
                         lines.append(escape(title[:200]))
                         if scope_label:
                             lines.append(f"<i>Scope: {escape(scope_label)}</i>")
+                        if time_str:
+                            lines.append(f"<i>Opened {time_str}</i>")
                         lines.append(f'🔗 <a href="{html_url}">View PR</a>')
 
                         msg = "\n".join(lines)
-                        await send_message(msg, post_type="atlas_pr", priority=priority, db=db)
+                        await send_message(msg, post_type="atlas_pr", priority=priority, db=db, source_time=source_time)
                         await mark_pr_seen(db, pr_number, title)
                         posted += 1
 

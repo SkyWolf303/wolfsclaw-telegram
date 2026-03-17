@@ -1,4 +1,4 @@
-"""X/Twitter poller using API v2."""
+"""X/Twitter poller using API v2 — verified source timestamps only."""
 
 import asyncio
 import logging
@@ -20,44 +20,48 @@ from bot.db import (
     mark_tweet_seen,
 )
 from bot.telegram import send_message
+from bot.timeutils import parse_iso, is_fresh, age_label
 
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.twitter.com/2"
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
-_TIMELINE_SLEEP = 0.5  # seconds between timeline calls
+_TIMELINE_SLEEP = 0.5
 
 
 def _tw_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {X_BEARER_TOKEN}"}
 
 
-def _format_timeline_tweet(username: str, text: str, tweet_id: str) -> str:
+def _format_timeline_tweet(username: str, text: str, tweet_id: str, source_time=None) -> str:
     truncated = escape(text[:280])
+    time_str = f" · {age_label(source_time)}" if source_time else ""
     return (
         f"<b>🐺 @{escape(username)}</b>\n"
         f"{truncated}\n"
-        f'<a href="https://x.com/{username}/status/{tweet_id}">View tweet</a>'
+        f"<i>Posted{time_str}</i>\n"
+        f'🔗 <a href="https://x.com/{username}/status/{tweet_id}">View on X</a>'
     )
 
 
-def _format_search_tweet(username: str, text: str, tweet_id: str, query: str) -> str:
+def _format_search_tweet(username: str, text: str, tweet_id: str, source_time=None) -> str:
     truncated = escape(text[:280])
+    time_str = f" · {age_label(source_time)}" if source_time else ""
     return (
         f"<b>🐺 Den Buzz</b>\n"
-        f"@{escape(username)}: {truncated}\n"
-        f'<a href="https://x.com/{username}/status/{tweet_id}">View tweet</a>'
+        f"<b>by @{escape(username)}</b>\n"
+        f"{truncated}\n"
+        f"<i>Posted{time_str}</i>\n"
+        f'🔗 <a href="https://x.com/{username}/status/{tweet_id}">View on X</a>'
     )
 
 
 async def _lookup_user_id(
     session: aiohttp.ClientSession, username: str, db
 ) -> str | None:
-    """Look up a Twitter user ID by username, with caching."""
     cached = await get_cached_user_id(db, username)
     if cached:
         return cached
-
     url = f"{_API_BASE}/users/by/username/{username}"
     try:
         async with session.get(url, headers=_tw_headers(), timeout=_TIMEOUT) as resp:
@@ -80,7 +84,6 @@ async def _poll_timeline(
     user_id: str,
     db,
 ) -> int:
-    """Fetch recent tweets for a single user. Returns count of new tweets posted."""
     url = (
         f"{_API_BASE}/users/{user_id}/tweets"
         f"?max_results=10&exclude=retweets,replies"
@@ -100,15 +103,23 @@ async def _poll_timeline(
         logger.error("Twitter timeline error for @%s: %s", username, e)
         return 0
 
-    tweets = data.get("data", [])
     posted = 0
-    for tweet in tweets:
+    for tweet in data.get("data", []):
         tweet_id = tweet.get("id", "")
         if not tweet_id or await is_tweet_seen(db, tweet_id):
             continue
+
+        # Verified source timestamp from Twitter API
+        source_time = parse_iso(tweet.get("created_at"))
+
+        # Reject stale tweets — verified from Twitter's created_at field
+        if not is_fresh(source_time):
+            logger.debug("Skipping stale tweet %s (source_time=%s)", tweet_id, source_time)
+            continue
+
         text = tweet.get("text", "")
-        msg = _format_timeline_tweet(username, text, tweet_id)
-        await send_message(msg, post_type="twitter_timeline", db=db)
+        msg = _format_timeline_tweet(username, text, tweet_id, source_time)
+        await send_message(msg, post_type="twitter_timeline", db=db, source_time=source_time)
         await mark_tweet_seen(db, tweet_id, username, "timeline")
         posted += 1
 
@@ -120,7 +131,6 @@ async def _poll_search(
     query: str,
     db,
 ) -> int:
-    """Run a keyword search and post new tweets. Returns count posted."""
     url = (
         f"{_API_BASE}/tweets/search/recent"
         f"?query={quote(query)}"
@@ -141,22 +151,27 @@ async def _poll_search(
         logger.error("Twitter search error for '%s': %s", query, e)
         return 0
 
-    tweets = data.get("data", [])
-    # Build author_id -> username map from includes
     users_map: dict[str, str] = {}
     for u in data.get("includes", {}).get("users", []):
         users_map[u["id"]] = u.get("username", "unknown")
 
     posted = 0
-    for tweet in tweets:
+    for tweet in data.get("data", []):
         tweet_id = tweet.get("id", "")
         if not tweet_id or await is_tweet_seen(db, tweet_id):
             continue
+
+        source_time = parse_iso(tweet.get("created_at"))
+
+        if not is_fresh(source_time):
+            logger.debug("Skipping stale search tweet %s", tweet_id)
+            continue
+
         author_id = tweet.get("author_id", "")
         username = users_map.get(author_id, "unknown")
         text = tweet.get("text", "")
-        msg = _format_search_tweet(username, text, tweet_id, query)
-        await send_message(msg, post_type="twitter_search", db=db)
+        msg = _format_search_tweet(username, text, tweet_id, source_time)
+        await send_message(msg, post_type="twitter_search", db=db, source_time=source_time)
         await mark_tweet_seen(db, tweet_id, username, "search", query)
         posted += 1
 
@@ -164,7 +179,6 @@ async def _poll_search(
 
 
 async def poll_twitter(db) -> None:
-    """Poll all Twitter timelines and keyword searches."""
     if not X_BEARER_TOKEN:
         logger.warning("X_BEARER_TOKEN not set — skipping Twitter source")
         return
@@ -173,7 +187,6 @@ async def poll_twitter(db) -> None:
     total_posted = 0
 
     async with aiohttp.ClientSession() as session:
-        # Build full accounts map including runtime lookups
         accounts = dict(TWITTER_ACCOUNTS)
         for username in TWITTER_LOOKUP_ACCOUNTS:
             uid = await _lookup_user_id(session, username, db)
@@ -182,16 +195,12 @@ async def poll_twitter(db) -> None:
             else:
                 logger.warning("Could not resolve @%s — skipping", username)
 
-        # Poll timelines with rate-limit-friendly sleep
         for username, user_id in accounts.items():
-            posted = await _poll_timeline(session, username, user_id, db)
-            total_posted += posted
+            total_posted += await _poll_timeline(session, username, user_id, db)
             await asyncio.sleep(_TIMELINE_SLEEP)
 
-        # Poll keyword searches
         for query in TWITTER_SEARCH_QUERIES:
-            posted = await _poll_search(session, query, db)
-            total_posted += posted
+            total_posted += await _poll_search(session, query, db)
             await asyncio.sleep(_TIMELINE_SLEEP)
 
     logger.info("Twitter poll done — %d new tweets posted", total_posted)

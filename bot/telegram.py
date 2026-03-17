@@ -7,6 +7,8 @@ Two-layer system:
 
 import asyncio
 import logging
+from datetime import datetime
+from typing import Optional
 
 from telegram import Bot
 from telegram.constants import ParseMode
@@ -83,6 +85,7 @@ async def send_message(
     db=None,
     priority: int = 5,
     enrich: bool = True,
+    source_time: Optional[datetime] = None,
 ) -> None:
     """Enrich, deduplicate, and enqueue a message for rate-limited delivery.
 
@@ -119,4 +122,4 @@ async def send_message(
         return
 
     from bot.queue import get_queue
-    await get_queue().push(text, post_type=post_type, db=db, priority=priority)
+    await get_queue().push(text, post_type=post_type, db=db, priority=priority, source_time=source_time)
