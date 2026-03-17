@@ -16,9 +16,10 @@ from bot.queue import get_queue
 from bot.sources.atlas import poll_atlas
 from bot.sources.forum import poll_forum
 from bot.sources.insights import poll_insights
-from bot.sources.market import daily_summary, poll_market, poll_tvl, weekly_tvl_summary
+from bot.sources.market import daily_summary, poll_market, poll_tvl, poll_fees, weekly_tvl_summary
 from bot.sources.twitter import poll_twitter
 from bot.sources.web import poll_web
+from bot.sources.onchain import poll_onchain
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -35,6 +36,8 @@ POLLERS = [
     ("twitter", poll_twitter),
     ("insights", poll_insights),
     ("web", poll_web),
+    ("onchain", poll_onchain),
+    ("fees", poll_fees),
 ]
 
 

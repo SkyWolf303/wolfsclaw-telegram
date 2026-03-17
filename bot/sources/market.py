@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 SKY_LIVE_URL = "https://sky-ten-alpha.vercel.app/api/get-sky-live"
 DEFILLAMA_TVL_URL = "https://api.llama.fi/tvl"
+DEFILLAMA_FEES_URL = "https://api.llama.fi/summary/fees"
+DEFILLAMA_PROTOCOL_URL = "https://api.llama.fi/protocol"
 
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
 
@@ -194,6 +196,41 @@ async def daily_summary(db) -> None:
     await save_market_snapshot(db, "USDS", None, usds_supply, None)
     await save_market_snapshot(db, "SKY", sky_price, None, sky_mcap)
     logger.info("Daily summary posted")
+
+
+async def poll_fees(db) -> None:
+    """Fetch Sky protocol fees/revenue from DefiLlama — alerts on significant changes."""
+    logger.info("Polling protocol fees…")
+    FEE_SLUGS = ["sky-lending", "sparklend"]
+
+    async with aiohttp.ClientSession() as session:
+        for slug in FEE_SLUGS:
+            try:
+                url = f"{DEFILLAMA_FEES_URL}/{slug}?dataType=dailyFees"
+                async with session.get(url, timeout=_TIMEOUT) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    # totalDataChart gives daily array, last entry = most recent
+                    chart = data.get("totalDataChart", [])
+                    if len(chart) >= 2:
+                        latest_fees = chart[-1][1] if chart[-1] else 0
+                        prev_fees = chart[-2][1] if chart[-2] else 0
+                        if prev_fees and latest_fees:
+                            pct = ((latest_fees - prev_fees) / abs(prev_fees)) * 100
+                            if abs(pct) > 20:
+                                arrow = "📈" if pct > 0 else "📉"
+                                msg = (
+                                    f"<b>💰 Protocol Fees — {escape(slug)}</b>\n"
+                                    f"Daily fees: {_fmt_number(latest_fees, '$')} "
+                                    f"({arrow} {pct:+.1f}% vs prior day)\n"
+                                    f'🔗 <a href="https://defillama.com/protocol/{escape(slug)}">DefiLlama</a>'
+                                )
+                                await send_message(msg, post_type="fees_alert", db=db, priority=4)
+            except Exception as e:
+                logger.debug("Fees fetch error for %s: %s", slug, e)
+
+    logger.info("Fees poll done")
 
 
 async def weekly_tvl_summary(db) -> None:
