@@ -35,7 +35,7 @@ def _tw_headers() -> dict[str, str]:
 def _format_timeline_tweet(username: str, text: str, tweet_id: str) -> str:
     truncated = escape(text[:280])
     return (
-        f"<b>🐦 @{escape(username)}</b>\n"
+        f"<b>🐺 @{escape(username)}</b>\n"
         f"{truncated}\n"
         f'<a href="https://x.com/{username}/status/{tweet_id}">View tweet</a>'
     )
@@ -44,7 +44,7 @@ def _format_timeline_tweet(username: str, text: str, tweet_id: str) -> str:
 def _format_search_tweet(username: str, text: str, tweet_id: str, query: str) -> str:
     truncated = escape(text[:280])
     return (
-        f"<b>🔎 Community Buzz</b>\n"
+        f"<b>🐺 Den Buzz</b>\n"
         f"@{escape(username)}: {truncated}\n"
         f'<a href="https://x.com/{username}/status/{tweet_id}">View tweet</a>'
     )
