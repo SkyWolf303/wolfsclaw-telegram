@@ -37,9 +37,9 @@ async def _search(session: aiohttp.ClientSession, query: str, count: int = 5) ->
     }
     params = {
         "q": query,
-        "count": count,
+        "count": str(count),
         "freshness": FRESHNESS,
-        "text_decorations": False,
+        "text_decorations": "0",
         "search_lang": "en",
         "country": "us",
     }
