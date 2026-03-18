@@ -86,6 +86,7 @@ async def send_message(
     priority: int = 5,
     enrich: bool = True,
     source_time: Optional[datetime] = None,
+    source_account: str = "",
 ) -> None:
     """Enrich, deduplicate, and enqueue a message for rate-limited delivery.
 
@@ -128,4 +129,4 @@ async def send_message(
         return
 
     from bot.queue import get_queue
-    await get_queue().push(text, post_type=post_type, priority=priority, source_time=source_time)
+    await get_queue().push(text, post_type=post_type, priority=priority, source_time=source_time, source_account=source_account)

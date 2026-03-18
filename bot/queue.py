@@ -23,12 +23,16 @@ BURST_COOLDOWN_S: float = 180.0
 BURST_LIMIT: int = 2
 
 
+SAME_ACCOUNT_COOLDOWN_S: float = 600.0  # 10 minutes
+
+
 @dataclass
 class QueuedMessage:
     text: str
     post_type: str = "general"
     priority: int = 5
     source_time: Optional[datetime] = None  # verified from the source
+    source_account: str = ""  # username/handle for consecutive dedup
 
 
 class MessageQueue:
@@ -38,6 +42,7 @@ class MessageQueue:
         self._task: asyncio.Task | None = None
         self._consecutive_count = 0
         self._last_sent_at: float = 0.0
+        self._last_sent_by: dict[str, float] = {}  # account → monotonic timestamp
 
     async def push(
         self,
@@ -45,6 +50,7 @@ class MessageQueue:
         post_type: str = "general",
         priority: int = 5,
         source_time: Optional[datetime] = None,
+        source_account: str = "",
     ) -> bool:
         """Add a message to the queue.
 
@@ -65,6 +71,7 @@ class MessageQueue:
             post_type=post_type,
             priority=priority,
             source_time=source_time,
+            source_account=source_account,
         )
         # Sort key: (priority, -source_epoch) → highest priority + newest source first
         sort_key = (priority, source_epoch(source_time))
@@ -130,11 +137,25 @@ class MessageQueue:
                         await asyncio.sleep(BURST_COOLDOWN_S)
                         self._consecutive_count = 0
 
+                    # Same-account consecutive dedup: extra cooldown
+                    if msg.source_account:
+                        last_from = self._last_sent_by.get(msg.source_account, 0.0)
+                        acct_elapsed = time.monotonic() - last_from
+                        if last_from > 0 and acct_elapsed < SAME_ACCOUNT_COOLDOWN_S:
+                            wait = SAME_ACCOUNT_COOLDOWN_S - acct_elapsed
+                            logger.info(
+                                "Same-account cooldown for %s — waiting %.0fs",
+                                msg.source_account, wait,
+                            )
+                            await asyncio.sleep(wait)
+
                     success = await _send_raw(msg.text, msg.post_type, db)
 
                     if success:
                         self._last_sent_at = time.monotonic()
                         self._consecutive_count += 1
+                        if msg.source_account:
+                            self._last_sent_by[msg.source_account] = time.monotonic()
                         remaining = self._queue.qsize()
                         if remaining > 0:
                             logger.info("Sent %s — %d more in queue", msg.post_type, remaining)

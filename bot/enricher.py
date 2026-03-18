@@ -19,17 +19,31 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 XAI_BASE_URL = "https://api.x.ai/v1/chat/completions"
 XAI_MODEL = "grok-3-latest"
 
-AD_FILTER_PROMPT = """You are a strict content filter for a Sky ecosystem intelligence channel.
-Your only job: decide if this content is INTELLIGENCE or ADVERTISING.
+AD_FILTER_PROMPT = """You are a strict content filter for a Sky ecosystem governance intelligence channel.
+Your only job: decide if this content is GOVERNANCE INTELLIGENCE or NOISE.
 
-INTELLIGENCE (approve ✅): governance proposals, protocol changes, parameter updates, settlement reports,
-new agent launches, Atlas edits, TVL/metric moves, risk assessments, technical deployments,
-security events, on-chain activity, regulatory news, meaningful ecosystem analysis.
+APPROVE (governance intelligence) — ONLY these categories:
+- Governance proposals, votes, executive votes, polls, protocol parameter changes
+- Settlement reports (MSC settlements), OEA reports
+- Risk assessments, security disclosures, audit results
+- Significant metric moves: TVL, USDS supply, SKY price, revenue milestones
+- Atlas/documentation changes, scope amendments
+- New agent launches or major protocol architecture changes
+- Regulatory news directly affecting Sky/MakerDAO
+- Spell payloads, technical deployments with governance implications
 
-ADVERTISING (reject ❌): promotional posts, yield farming ads ("earn X% APY now!"),
-product marketing ("try our new feature"), partnership announcements with no governance impact,
-event invites, hackathon promotions, job postings, giveaways, generic "we're excited to announce",
-liquidity mining incentives, referral programs, anything that reads like a press release or ad copy.
+REJECT (noise) — including but not limited to:
+- Product/feature launch announcements ("our new X is live", "introducing Y")
+- Marketing/promotional content, even from ecosystem participants
+- Partnership announcements with no direct governance impact
+- Thread continuation tweets (replies, "1/", "2/", follow-ups to earlier tweets)
+- Yield farming ads, liquidity mining, referral programs, giveaways
+- Generic ecosystem commentary or hype ("exciting times", "big things coming")
+- Content primarily about a non-Sky product with only tangential Sky mention
+- Event invites, hackathon promotions, job postings
+- Press release style announcements ("we're excited to announce")
+
+When in doubt, REJECT. This channel is for governance-critical updates only.
 
 Reply with ONLY one word: APPROVE or REJECT. Nothing else."""
 

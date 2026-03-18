@@ -63,6 +63,13 @@ _HYPE_PHRASES = [
 ]
 
 
+# Accounts exempt from minimum engagement filter (always post)
+_ENGAGEMENT_EXEMPT = {"runekek", "adamfraser", "soterlabs"}
+
+# Governance keywords — tweets containing these bypass engagement filter
+_GOVERNANCE_TERMS = {"governance", "proposal", "settlement", "spell", "atlas", "msc"}
+
+
 def _is_hype_tweet(text: str) -> bool:
     """Returns True if tweet is social media hype with no analytical value."""
     lower = text.lower()
@@ -149,11 +156,13 @@ async def _poll_timeline(
     username: str,
     user_id: str,
     db,
+    cycle_conversations: set[str],
+    cycle_account_count: dict[str, int],
 ) -> int:
     url = (
         f"{_API_BASE}/users/{user_id}/tweets"
         f"?max_results=10&exclude=retweets,replies"
-        f"&tweet.fields=created_at,text,author_id,public_metrics"
+        f"&tweet.fields=created_at,text,author_id,public_metrics,conversation_id"
         f"&expansions=author_id&user.fields=username"
     )
     try:
@@ -186,14 +195,49 @@ async def _poll_timeline(
         text = tweet.get("text", "")
         metrics = tweet.get("public_metrics", {})
         score = _engagement_score(metrics)
+
+        # Thread detection: only post root tweets, skip thread replies
+        conv_id = tweet.get("conversation_id", tweet_id)
+        if conv_id != tweet_id:
+            logger.debug("Skipping thread reply %s (root: %s)", tweet_id, conv_id)
+            await mark_tweet_seen(db, tweet_id, username, "timeline")
+            continue
+        if conv_id in cycle_conversations:
+            logger.debug("Skipping duplicate thread %s from @%s", conv_id, username)
+            await mark_tweet_seen(db, tweet_id, username, "timeline")
+            continue
+        cycle_conversations.add(conv_id)
+
+        # Per-account rate limit: max 1 per cycle (2 if viral >200 engagement)
+        account_count = cycle_account_count.get(username, 0)
+        if account_count >= 2:
+            logger.debug("Hard rate limit: @%s already posted %d this cycle", username, account_count)
+            await mark_tweet_seen(db, tweet_id, username, "timeline")
+            continue
+        if account_count >= 1 and score <= 200:
+            logger.debug("Rate limit: @%s already posted this cycle (score=%d)", username, score)
+            await mark_tweet_seen(db, tweet_id, username, "timeline")
+            continue
+
+        # Minimum engagement for non-VIP, non-governance tweets
+        likes = metrics.get("like_count", 0) or 0
+        rts = metrics.get("retweet_count", 0) or 0
+        if (likes < 5 and rts < 2
+                and username.lower() not in _ENGAGEMENT_EXEMPT
+                and not any(term in text.lower() for term in _GOVERNANCE_TERMS)):
+            logger.debug("Skipping low-engagement tweet from @%s (%d likes, %d RTs)", username, likes, rts)
+            await mark_tweet_seen(db, tweet_id, username, "timeline")
+            continue
+
         priority = _priority_from_engagement(score)
         eng_label = _engagement_label(metrics)
 
         msg = _format_timeline_tweet(username, text, tweet_id, source_time)
         if eng_label:
             msg += f"\n<i>{escape(eng_label)}</i>"
-        await send_message(msg, post_type="twitter_timeline", db=db, source_time=source_time, priority=priority)
+        await send_message(msg, post_type="twitter_timeline", db=db, source_time=source_time, priority=priority, source_account=username)
         await mark_tweet_seen(db, tweet_id, username, "timeline")
+        cycle_account_count[username] = account_count + 1
         posted += 1
 
     return posted
@@ -203,12 +247,13 @@ async def _poll_search(
     session: aiohttp.ClientSession,
     query: str,
     db,
+    cycle_conversations: set[str],
 ) -> int:
     url = (
         f"{_API_BASE}/tweets/search/recent"
         f"?query={quote(query)}"
         f"&max_results=10"
-        f"&tweet.fields=created_at,text,author_id"
+        f"&tweet.fields=created_at,text,author_id,conversation_id"
         f"&expansions=author_id&user.fields=username,public_metrics"
     )
     try:
@@ -243,6 +288,16 @@ async def _poll_search(
             logger.debug("Skipping stale search tweet %s", tweet_id)
             continue
 
+        # Thread detection: skip thread replies and duplicate threads
+        conv_id = tweet.get("conversation_id", tweet_id)
+        if conv_id != tweet_id:
+            logger.debug("Skipping search thread reply %s", tweet_id)
+            continue
+        if conv_id in cycle_conversations:
+            logger.debug("Skipping duplicate thread %s in search", conv_id)
+            continue
+        cycle_conversations.add(conv_id)
+
         author_id = tweet.get("author_id", "")
         author = users_map.get(author_id, {"username": "unknown", "followers": 0})
         username = author["username"]
@@ -267,7 +322,7 @@ async def _poll_search(
             continue
 
         msg = _format_search_tweet(username, text, tweet_id, source_time)
-        await send_message(msg, post_type="twitter_search", db=db, source_time=source_time)
+        await send_message(msg, post_type="twitter_search", db=db, source_time=source_time, source_account=username)
         await mark_tweet_seen(db, tweet_id, username, "search", query)
         posted += 1
 
@@ -282,6 +337,10 @@ async def poll_twitter(db) -> None:
     logger.info("Polling Twitter…")
     total_posted = 0
 
+    # Per-cycle tracking: shared across all timeline + search polls
+    cycle_conversations: set[str] = set()
+    cycle_account_count: dict[str, int] = {}
+
     async with aiohttp.ClientSession() as session:
         accounts = dict(TWITTER_ACCOUNTS)
         for username in TWITTER_LOOKUP_ACCOUNTS:
@@ -292,11 +351,13 @@ async def poll_twitter(db) -> None:
                 logger.warning("Could not resolve @%s — skipping", username)
 
         for username, user_id in accounts.items():
-            total_posted += await _poll_timeline(session, username, user_id, db)
+            total_posted += await _poll_timeline(
+                session, username, user_id, db, cycle_conversations, cycle_account_count,
+            )
             await asyncio.sleep(_TIMELINE_SLEEP)
 
         for query in TWITTER_SEARCH_QUERIES:
-            total_posted += await _poll_search(session, query, db)
+            total_posted += await _poll_search(session, query, db, cycle_conversations)
             await asyncio.sleep(_TIMELINE_SLEEP)
 
     logger.info("Twitter poll done — %d new tweets posted", total_posted)
