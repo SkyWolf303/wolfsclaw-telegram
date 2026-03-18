@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Maximum age of content we'll accept
-MAX_AGE_HOURS = 24
+MAX_AGE_HOURS = 6  # Only content from last 6 hours — keeps alerts timely
 
 
 def utcnow() -> datetime:

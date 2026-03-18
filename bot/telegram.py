@@ -111,8 +111,8 @@ async def send_message(
         logger.info("Keyword pre-filter dropped ad: %s…", text[:60])
         return
 
-    # Grok ad filter — catches subtler promotional content
-    if XAI_API_KEY:
+    # Grok ad filter — only for web/twitter content, not for governance sources
+    if XAI_API_KEY and post_type in ("twitter_search", "twitter_timeline", "web_general"):
         from bot.enricher import is_ad
         if await is_ad(text):
             return  # silently dropped

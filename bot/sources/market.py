@@ -117,7 +117,7 @@ async def poll_market(db) -> None:
             f"USDS Supply: {_fmt_number(usds_supply)} ({arrow} {usds_change:+.1f}% since last check)"
         )
 
-    if sky_change is not None and abs(sky_change) > 5:
+    if sky_change is not None and abs(sky_change) > 3:
         arrow = "📈" if sky_change > 0 else "📉"
         alert_parts.append(
             f"SKY Price: {_fmt_number(sky_price, prefix='$')} ({arrow} {sky_change:+.1f}% since last check)"
@@ -151,7 +151,7 @@ async def poll_tvl(db) -> None:
             last = await get_last_tvl_snapshot(db, slug)
             pct = _pct_change(last["tvl"] if last else None, tvl)
 
-            if pct is not None and abs(pct) > 5:
+            if pct is not None and abs(pct) > 3:
                 arrow = "📈" if pct > 0 else "📉"
                 alerts.append(
                     f"  {escape(slug)}: {_fmt_number(tvl, prefix='$')} ({arrow} {pct:+.1f}%)"
