@@ -28,8 +28,13 @@ _API_BASE = "https://api.twitter.com/2"
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
 _TIMELINE_SLEEP = 0.5
 
-# Minimum follower count for keyword search hits (not applied to monitored accounts)
-MIN_FOLLOWERS_FOR_SEARCH = 500
+# Minimum follower count for keyword search hits
+MIN_FOLLOWERS_FOR_SEARCH = 5000
+
+# Keyword searches are restricted to authors who are in our monitored accounts list.
+# Random people tweeting about Sky = noise. Timeline-only is the clean approach.
+# Set to True to only post keyword search hits from monitored account handles.
+SEARCH_MONITORED_ONLY = True
 
 # Hype phrases — reject tweets that are pure social media influence noise
 _HYPE_PHRASES = [
@@ -243,6 +248,13 @@ async def _poll_search(
         username = author["username"]
         followers = author["followers"]
         text = tweet.get("text", "")
+
+        # Filter: only post keyword search hits from our monitored accounts
+        if SEARCH_MONITORED_ONLY:
+            monitored_handles = {h.lower() for h in TWITTER_ACCOUNTS.keys()}
+            if username.lower() not in monitored_handles:
+                logger.debug("Skipping keyword search tweet from non-monitored @%s", username)
+                continue
 
         # Filter: minimum followers for keyword search hits
         if followers < MIN_FOLLOWERS_FOR_SEARCH:
